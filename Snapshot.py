@@ -43,13 +43,13 @@ class ScreenshotImageEditor():
         self.canvasImage_y2 = None
         self.imageMaxWidth = None
         self.imageMaxHeight = None
+        self.draw_layer = None
+        self.canvas_image_id = None
 
 
-    def SaveImageFile(self,*args):
-        x= self.canvasImage_x1+self.canvas.winfo_x()+self.master.winfo_rootx()
-        y = self.canvasImage_y1+self.canvas.winfo_y()+self.master.winfo_rooty()
-        image =ImageGrab.grab(bbox=(x, y,x+self.Markerimg.width(), y+self.Markerimg.height()))
-        image.save(self.imagePath)
+    def SaveImageFile(self, *args):
+        # Merges the layers and saves
+        Image.alpha_composite(self.back_img, self.draw_layer).convert("RGB").save(self.imagePath)
         self.master.withdraw()
 
     def ResizeImageFile(self,ImageFileData,width,height):
@@ -81,7 +81,10 @@ class ScreenshotImageEditor():
         self.imageMaxWidth = self.master.winfo_screenwidth()
         self.imageMaxHeight = self.master.winfo_screenheight()
         self.imagePath = path
-        self.back_img = imageData
+        self.back_img = imageData.convert("RGBA") # Ensure RGBA
+        self.draw_layer = Image.new("RGBA", self.back_img.size, (255, 255, 255, 0))
+        self.last_x = None
+        self.last_y = None
         
 
         img_width = self.back_img.width
@@ -104,13 +107,41 @@ class ScreenshotImageEditor():
             self.canvasImage_x1 = 15
             self.canvasImage_y1 = 15
 
-        self.canvas.create_image(self.canvasImage_x1,self.canvasImage_y1, anchor="nw",image=self.Markerimg)
+        self.canvas_image_id = self.canvas.create_image(self.canvasImage_x1, self.canvasImage_y1, anchor="nw", image=self.Markerimg)
         self.master.resizable(False, False)
         self.buttonClickMotion = self.canvas.bind("<B1-Motion>", self.draw_brush)
+        self.canvas.bind("<ButtonRelease-1>", lambda e: self.reset_last_pos())
+
+    def reset_last_pos(self):
+        self.last_x, self.last_y = None, None
 
     def draw_brush(self, event):
-        x, y = event.x, event.y
-        self.canvas.create_rectangle(x - self.brush_size, y - self.brush_size, x + self.brush_size, y + self.brush_size, fill="#e5de00", outline="",stipple="gray50")
+        from PIL import ImageDraw
+        draw = ImageDraw.Draw(self.draw_layer)
+        r = self.brush_size
+        color = (255, 255, 0, 80)
+
+        # 1. Calculate local coordinates (where 0,0 is the corner of the image)
+        curr_x = event.x - self.canvasImage_x1
+        curr_y = event.y - self.canvasImage_y1
+
+        # 2. Draw the smooth connection
+        # We only draw if the mouse is actually inside the image bounds
+        if 0 <= curr_x <= self.back_img.width and 0 <= curr_y <= self.back_img.height:
+            if self.last_x is not None:
+                # Use a line to connect last point to current point
+                draw.line([self.last_x, self.last_y, curr_x, curr_y], fill=color, width=r*2)
+            
+            # Draw the circle at the current tip
+            draw.ellipse([curr_x-r, curr_y-r, curr_x+r, curr_y+r], fill=color)
+
+            # 3. Update tracking
+            self.last_x, self.last_y = curr_x, curr_y
+
+            # 4. Refresh display
+            combined = Image.alpha_composite(self.back_img, self.draw_layer)
+            self.Markerimg = ImageTk.PhotoImage(combined)
+            self.canvas.itemconfig(self.canvas_image_id, image=self.Markerimg)
 
 class Snapshot: 
     def __init__(self,_screenshotEditor,_log):
@@ -323,6 +354,7 @@ class Snapshot:
             cell_format.set_bold()
             image_row=0
             image_col =0
+            errorWhileWritingFile = ''
             try:
                 for directory in natsorted(os.listdir(source_diectory)):
                     directory_path = os.path.join(source_diectory,directory)
@@ -371,9 +403,13 @@ class Snapshot:
                     
                     image_row+=rowGap
             except:
-                self._log.Error("Error Occured while writing Excel file")  
+                errorWhileWritingFile = "Error Occured while writing Excel file"
+                self._log.Error(errorWhileWritingFile)  
             workbook.close()
-            self.Error_label.configure(text="Excel Generated successfully",text_color='green')
+            if(errorWhileWritingFile==''):
+                self.Error_label.configure(text="Excel Generated successfully",text_color='green')
+            else:
+                self.Error_label.configure(text=errorWhileWritingFile,text_color='red')
             self._log.Info(f"Excel file creation Completed")
             
         self.Capture_button.configure(state = 'normal')
