@@ -43,14 +43,22 @@ class ScreenshotImageEditor():
         self.canvasImage_y2 = None
         self.imageMaxWidth = None
         self.imageMaxHeight = None
+        self.draw_layer = None
+        self.canvas_image_id = None
+        self.colorOptions = None
+        # Define mapping: "Display Name": (RGBA_Drawing, Hex_UI)
+        self.color_data = {
+            "Yellow": ((255, 255, 0, 80), "#BDC731"),
+            "Red":    ((255, 0, 0, 80),   "#D63131"),
+            "Green":  ((0, 255, 0, 80),   "#3CB857")
+        }
+        self.current_color_rgb = self.color_data["Yellow"][0]
 
 
-    def SaveImageFile(self,*args):
-        x= self.canvasImage_x1+self.canvas.winfo_x()+self.master.winfo_rootx()
-        y = self.canvasImage_y1+self.canvas.winfo_y()+self.master.winfo_rooty()
-        image =ImageGrab.grab(bbox=(x, y,x+self.Markerimg.width(), y+self.Markerimg.height()))
-        image.save(self.imagePath)
-        self.master.withdraw()
+    def SaveImageFile(self, *args):
+        # Merges the layers and saves
+        Image.alpha_composite(self.back_img, self.draw_layer).convert("RGB").save(self.imagePath)
+        self.master.destroy()
 
     def ResizeImageFile(self,ImageFileData,width,height):
         image = ImageFileData
@@ -70,18 +78,61 @@ class ScreenshotImageEditor():
             else:
                 image = image.resize((image.width+temp_height,image.height+temp_height))
         return image
-
+    
+    def callback(self, value):
+        rgba, hex_val = self.color_data.get(value)
+        self.current_color_rgb = rgba
+        self.color_indicator.configure(fg_color=hex_val)
+        
     def resizeImageAndCreateCanvas(self,path,imageData):
         self.master = Toplevel()
         self.master.title("Edit")
-        self.Save = customtkinter.CTkButton(self.master,text="Save",command=self.SaveImageFile)
-        self.Save.pack()
+        self.master.configure(background="#1A1A1A")
+        self.button_frame = customtkinter.CTkFrame(self.master, fg_color="transparent")
+        self.button_frame.pack(fill="x",padx=0,pady=0)
+
+        self.button_frame.grid_columnconfigure(1, weight=1)
+
+        self.Save = customtkinter.CTkButton(self.button_frame, text="Save",height=50,corner_radius=0, command=self.SaveImageFile)
+        self.Save.grid(row=0, column=0, sticky="w")
+
+        self.dropdown_group = customtkinter.CTkFrame(self.button_frame, fg_color="transparent")
+        self.dropdown_group.grid(row=0, column=2, sticky="e")
+
+        self.color_indicator = customtkinter.CTkLabel(
+            self.dropdown_group, 
+            text="", 
+            width=50, 
+            height=50, 
+            fg_color="#BDC731", 
+            corner_radius=2
+        )
+        self.color_indicator.grid(row=0, column=0, padx=(0, 5))
+
+        self.color_dropdown = customtkinter.CTkOptionMenu(
+            self.dropdown_group,
+            values=list(self.color_data.keys()),
+            command=self.callback,
+            height=50,
+        )
+        self.color_dropdown.grid(row=0, column=1)
+
         self.canvas = customtkinter.CTkCanvas(self.master, width=self.master.winfo_screenwidth(),height=self.master.winfo_screenheight())
+        
+        self.canvas.configure(
+            bg="#111111",
+            highlightthickness=0,  
+            borderwidth=0,         
+            bd=0
+            )
         self.canvas.pack()
         self.imageMaxWidth = self.master.winfo_screenwidth()
         self.imageMaxHeight = self.master.winfo_screenheight()
         self.imagePath = path
-        self.back_img = imageData
+        self.back_img = imageData.convert("RGBA") # Ensure RGBA
+        self.draw_layer = Image.new("RGBA", self.back_img.size, (255, 255, 255, 0))
+        self.last_x = None
+        self.last_y = None
         
 
         img_width = self.back_img.width
@@ -104,13 +155,34 @@ class ScreenshotImageEditor():
             self.canvasImage_x1 = 15
             self.canvasImage_y1 = 15
 
-        self.canvas.create_image(self.canvasImage_x1,self.canvasImage_y1, anchor="nw",image=self.Markerimg)
+        self.canvas_image_id = self.canvas.create_image(self.canvasImage_x1, self.canvasImage_y1, anchor="nw", image=self.Markerimg)
         self.master.resizable(False, False)
         self.buttonClickMotion = self.canvas.bind("<B1-Motion>", self.draw_brush)
+        self.canvas.bind("<ButtonRelease-1>", lambda e: self.reset_last_pos())
+
+    def reset_last_pos(self):
+        self.last_x, self.last_y = None, None
 
     def draw_brush(self, event):
-        x, y = event.x, event.y
-        self.canvas.create_rectangle(x - self.brush_size, y - self.brush_size, x + self.brush_size, y + self.brush_size, fill="#e5de00", outline="",stipple="gray50")
+        from PIL import ImageDraw
+        draw = ImageDraw.Draw(self.draw_layer)
+        r = self.brush_size
+        color = self.current_color_rgb
+
+        curr_x = event.x - self.canvasImage_x1
+        curr_y = event.y - self.canvasImage_y1
+
+        if 0 <= curr_x <= self.back_img.width and 0 <= curr_y <= self.back_img.height:
+            if self.last_x is not None:
+                draw.line([self.last_x, self.last_y, curr_x, curr_y], fill=color, width=r*2)
+            
+            draw.ellipse([curr_x-r, curr_y-r, curr_x+r, curr_y+r], fill=color)
+
+            self.last_x, self.last_y = curr_x, curr_y
+
+            combined = Image.alpha_composite(self.back_img, self.draw_layer)
+            self.Markerimg = ImageTk.PhotoImage(combined)
+            self.canvas.itemconfig(self.canvas_image_id, image=self.Markerimg)
 
 class Snapshot: 
     def __init__(self,_screenshotEditor,_log):
@@ -153,6 +225,7 @@ class Snapshot:
         self.win = customtkinter.CTk()
         self.win.resizable(False, False)
         self.win.iconbitmap(os.getcwd()+'\\WindowIcon.ico')
+        #self.win.iconbitmap(os.getcwd()+'\\WindowIcon.ico')
         self.win.title("Snapshot") 
         self.winNew =None
         self.Error_label =None
@@ -180,7 +253,7 @@ class Snapshot:
 
     def EditScreenshot(self,screenshotImage):
         self.screenshotEditor.resizeImageAndCreateCanvas(self.GetImageFileName(), screenshotImage)
-        self.win.deiconify()
+        #self.win.deiconify()
         
     ################################    
     #Grab and Take Screenshot
@@ -199,6 +272,8 @@ class Snapshot:
         self.endPoint= [int(event.x),int(event.y)]
         self.RemoveEventsAndCloseCaptureWindow()
         self.EditScreenshot(self.Screenshot(self.startPoint,self.endPoint))
+        self.win.wait_window(self.screenshotEditor.master)
+        self.win.deiconify()
 
     def RemoveEventsAndCloseCaptureWindow(self):
         self.canvas.delete(self.rectangle)
@@ -235,6 +310,7 @@ class Snapshot:
             time.sleep(0.5)
             self.EditScreenshot(self.Screenshot([0,0],[self.win.winfo_screenwidth(),self.win.winfo_screenheight()]))
             time.sleep(1)
+            self.win.wait_window(self.screenshotEditor.master)
             self.win.deiconify()
         else:
             self.winNew =Toplevel()
@@ -323,6 +399,7 @@ class Snapshot:
             cell_format.set_bold()
             image_row=0
             image_col =0
+            errorWhileWritingFile = ''
             try:
                 for directory in natsorted(os.listdir(source_diectory)):
                     directory_path = os.path.join(source_diectory,directory)
@@ -371,9 +448,13 @@ class Snapshot:
                     
                     image_row+=rowGap
             except:
-                self._log.Error("Error Occured while writing Excel file")  
+                errorWhileWritingFile = "Error Occured while writing Excel file"
+                self._log.Error(errorWhileWritingFile)  
             workbook.close()
-            self.Error_label.configure(text="Excel Generated successfully",text_color='green')
+            if(errorWhileWritingFile==''):
+                self.Error_label.configure(text="Excel Generated successfully",text_color='green')
+            else:
+                self.Error_label.configure(text=errorWhileWritingFile,text_color='red')
             self._log.Info(f"Excel file creation Completed")
             
         self.Capture_button.configure(state = 'normal')
