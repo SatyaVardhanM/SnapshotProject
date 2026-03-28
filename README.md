@@ -51,4 +51,10 @@ D. GENERATING EXCEL:
 - Icon Error: If you don't have 'WindowIcon.ico', the app 
   will use the default system icon.
 
+
+(image1.png) 
+(image2.png) 
+(image3.png) 
+(image4.png) 
+(image5.png)
 ============================================================
